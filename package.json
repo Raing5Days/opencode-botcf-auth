@@ -1,0 +1,31 @@
+{
+  "name": "opencode-botcf-auth",
+  "version": "0.1.0",
+  "description": "Bot Compute Fabric (botcf.com) provider plugin for OpenCode and Magpie",
+  "type": "module",
+  "main": "./opencode.mjs",
+  "exports": {
+    ".": "./opencode2.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "opencode.mjs",
+    "opencode2.mjs",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "magpie",
+    "botcf"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Raing5Days/opencode-botcf-auth.git"
+  },
+  "magpie": {
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDYyIDQ4IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IkJGIiBzdHlsZT0iY29sb3I6I2ZmNmI0YSI+CiAgPHBhdGggZmlsbD0iY3VycmVudENvbG9yIiBkPSJNNyA2aDEyLjFjNy4xIDAgMTEuMiAzLjYgMTEuMiA5LjMgMCAzLjQ1LTEuNjQgNi4yLTQuNTggNy43NCAzLjg2IDEuNSA2LjA4IDQuODIgNi4wOCA5LjI0QzMxLjggMzguNDIgMjcgNDIgMTguNzYgNDJIN1Y2Wm03LjI4IDYuNDh2Ny41aDQuNDhjMy4xMiAwIDQuODYtMS4zOCA0Ljg2LTMuNzYgMC0yLjQyLTEuNzYtMy43NC01LjE4LTMuNzRoLTQuMTZabTAgMTMuN3Y5LjM0aDUuMDhjMy40OCAwIDUuNTYtMS44MiA1LjU2LTQuNTYgMC0zLjAyLTIuMDgtNC43OC01Ljg4LTQuNzhoLTQuNzZaIi8+CiAgPHBhdGggZmlsbD0iY3VycmVudENvbG9yIiBkPSJNNDEuNSA2SDU4djYuOThoLTguODZ2Ny40Nmg3LjcydjYuODRoLTcuNzJWNDJINDEuNVY2WiIvPgo8L3N2Zz4K",
+    "maxConcurrency": 16
+  }
+}
