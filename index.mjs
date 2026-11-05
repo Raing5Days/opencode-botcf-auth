@@ -108,130 +108,131 @@ export const BotCFAuthPlugin = async ({ client }) => ({
       if (auth?.type !== "api" || !auth?.key) return {}
 
       try {
-        // Query /api/usage first, then fallback to /dashboard/billing/credit_grants
-        let usageData = null
-        try {
-          const resApi = await fetch(`https://botcf.com/api/usage`, {
+        // Fetch both user account usage and specific token attributes in parallel
+        const [resUser, resToken] = await Promise.all([
+          fetch(`https://botcf.com/api/usage`, {
+            headers: { Authorization: `Bearer ${auth.key}` },
+          }).catch(() => null),
+          fetch(`https://botcf.com/api/usage/token`, {
+            headers: { Authorization: `Bearer ${auth.key}` },
+          }).catch(() => null),
+        ])
+
+        let userData = null
+        if (resUser && resUser.ok) {
+          const json = await resUser.json()
+          if (json && (json.data || json.balance != null)) {
+            userData = json.data || json
+          }
+        }
+
+        let tokenData = null
+        if (resToken && resToken.ok) {
+          const json = await resToken.json()
+          if (json && json.data) {
+            tokenData = json.data
+          }
+        }
+
+        // 1. Account-level balance (actual money available in user wallet)
+        const userBalance = typeof (userData?.balance ?? userData?.remaining ?? userData?.total_available) === "number"
+          ? (userData?.balance ?? userData?.remaining ?? userData?.total_available)
+          : null
+
+        // 2. Token properties
+        const tokenName = tokenData?.name || ""
+        const isUnlimited = tokenData?.unlimited_quota === true
+        const expiresAt = tokenData?.expires_at || userData?.expires_at || 0
+        const tokenTotal = typeof tokenData?.total === "number" ? tokenData.total : 0
+        const tokenUsed = typeof tokenData?.used === "number" ? tokenData.used : 0
+
+        // If userBalance could not be determined, fallback to standard OpenAI billing
+        if (userBalance == null && !tokenData) {
+          const resSub = await fetch(`${BASE_URL}/dashboard/billing/subscription`, {
             headers: { Authorization: `Bearer ${auth.key}` },
           })
-          if (resApi.ok) {
-            const json = await resApi.json()
-            if (json && (json.data || json.total_granted || json.remaining != null)) {
-              usageData = json.data || json
+          if (!resSub.ok) {
+            return {
+              error: `Failed to fetch balance (${resSub.status})`,
+              windows: [],
             }
           }
-        } catch {}
-
-        if (!usageData) {
-          const resGrants = await fetch(`${BASE_URL}/dashboard/billing/credit_grants`, {
+          const sub = await resSub.json()
+          const total = typeof sub.hard_limit_usd === "number" ? sub.hard_limit_usd : 0
+          const resUsage = await fetch(`${BASE_URL}/dashboard/billing/usage?start_date=2024-01-01&end_date=2026-12-31`, {
             headers: { Authorization: `Bearer ${auth.key}` },
+          }).catch(() => null)
+          let used = 0
+          if (resUsage && resUsage.ok) {
+            const u = await resUsage.json()
+            used = (u?.total_usage ?? 0) / 100.0
+          }
+          const available = Math.max(0, total - used)
+          return {
+            plan: "BotCF",
+            balance: `¥${available.toFixed(2)}`,
+            windows: [
+              {
+                name: "可用额度",
+                balance: available,
+                unit: "CNY",
+              },
+            ],
+          }
+        }
+
+        const windows = []
+        const currentBalance = userBalance ?? 0
+
+        if (isUnlimited) {
+          // Token is unlimited: constrained only by account wallet balance
+          // Report as a prepaid wallet window so Magpie displays real balance without fake used%
+          windows.push({
+            name: "账户可用余额",
+            balance: currentBalance,
+            unit: "CNY",
           })
-          if (resGrants.ok) {
-            usageData = await resGrants.json()
-          }
+        } else if (tokenTotal > 0) {
+          // Token has a specific quota cap
+          // The token's own remaining allowance
+          const tokenRemain = Math.max(0, tokenTotal - tokenUsed)
+          // Actual available allowance is constrained by both token quota and user balance
+          const actualAvailable = Math.min(currentBalance, tokenRemain)
+          const usedPercent = Math.min(100, Math.max(0, (tokenUsed / tokenTotal) * 100))
+
+          windows.push({
+            name: "令牌额度上限",
+            used: usedPercent,
+            amount: tokenUsed,
+            limit: tokenTotal,
+            display: `可用 ¥${actualAvailable.toFixed(2)} (上限 ¥${tokenTotal.toFixed(2)})`,
+            unit: "CNY",
+          })
+        } else {
+          windows.push({
+            name: "账户可用余额",
+            balance: currentBalance,
+            unit: "CNY",
+          })
         }
 
-        if (usageData) {
-          const totalGranted = typeof (usageData.total_granted ?? usageData.total) === "number"
-            ? (usageData.total_granted ?? usageData.total)
-            : 0
-          const totalAvailable = typeof (usageData.total_available ?? usageData.remaining ?? usageData.balance) === "number"
-            ? (usageData.total_available ?? usageData.remaining ?? usageData.balance)
-            : 0
-          const totalUsed = typeof (usageData.total_used ?? usageData.used) === "number"
-            ? (usageData.total_used ?? usageData.used)
-            : (totalGranted - totalAvailable)
-
-          const isUnlimited = usageData.unlimited_quota === true
-          const expiresAt = usageData.expires_at || 0
-
-          // Calculate percent used of total granted limit
-          const usedPercent = totalGranted > 0 ? (totalUsed / totalGranted) * 100 : 0
-
-          // Windows:
-          // 1. "当前可用额度 / 总上限": reports actual remaining vs key's total allowance limit
-          // 2. If token has expiration / reset cycle, report as a window with reset time
-          const windows = []
-
-          if (isUnlimited) {
-            windows.push({
-              name: "令牌额度 (无限)",
-              used: 0,
-              display: `可用 ¥${totalAvailable.toFixed(2)} (不限额)`,
-              unit: "CNY",
-            })
-          } else {
-            windows.push({
-              name: "总额度限制",
-              used: Math.min(100, Math.max(0, usedPercent)),
-              display: `剩余 ¥${totalAvailable.toFixed(2)} / 上限 ¥${totalGranted.toFixed(2)}`,
-              amount: totalUsed,
-              limit: totalGranted,
-              unit: "CNY",
-            })
-          }
-
-          // Periodic / Expiration window
-          if (expiresAt > 0) {
-            const expDate = new Date(expiresAt * 1000)
-            windows.push({
-              name: "周期 / 有效期",
-              resetsAt: expDate.toISOString(),
-              display: `至 ${expDate.toLocaleDateString()}`,
-              unit: "CNY",
-              aside: true,
-            })
-          }
-
-          return {
-            plan: isUnlimited ? "BotCF (无上限)" : "BotCF",
-            balance: `¥${totalAvailable.toFixed(2)}`,
-            until: expiresAt > 0 ? new Date(expiresAt * 1000).toISOString() : undefined,
-            windows,
-          }
+        // Periodic / Expiration window (if token expires or resets at a specific time)
+        if (expiresAt > 0) {
+          const expDate = new Date(expiresAt * 1000)
+          windows.push({
+            name: "周期 / 有效期",
+            resetsAt: expDate.toISOString(),
+            display: `至 ${expDate.toLocaleDateString()}`,
+            aside: true,
+          })
         }
-
-        // Fallback to /dashboard/billing/subscription
-        const resSub = await fetch(`${BASE_URL}/dashboard/billing/subscription`, {
-          headers: { Authorization: `Bearer ${auth.key}` },
-        })
-
-        if (!resSub.ok) {
-          return {
-            error: `Failed to fetch balance (${resSub.status})`,
-            windows: [],
-          }
-        }
-
-        const sub = await resSub.json()
-        const total = typeof sub.hard_limit_usd === "number" ? sub.hard_limit_usd : 0
-
-        const resUsage = await fetch(`${BASE_URL}/dashboard/billing/usage?start_date=2024-01-01&end_date=2026-12-31`, {
-          headers: { Authorization: `Bearer ${auth.key}` },
-        }).catch(() => null)
-
-        let used = 0
-        if (resUsage && resUsage.ok) {
-          const u = await resUsage.json()
-          used = (u?.total_usage ?? 0) / 100.0
-        }
-
-        const available = Math.max(0, total - used)
-        const percent = total > 0 ? (used / total) * 100 : 0
 
         return {
-          plan: "BotCF",
-          balance: `¥${available.toFixed(2)}`,
-          windows: [
-            {
-              name: "总额度限制",
-              used: Math.min(100, Math.max(0, percent)),
-              display: `剩余 ¥${available.toFixed(2)} / 上限 ¥${total.toFixed(2)}`,
-              amount: used,
-              limit: total,
-              unit: "CNY",
-            },
-          ],
+          plan: isUnlimited ? "BotCF" : "BotCF (限额)",
+          user: tokenName || undefined,
+          balance: `¥${currentBalance.toFixed(2)}`,
+          until: expiresAt > 0 ? new Date(expiresAt * 1000).toISOString() : undefined,
+          windows,
         }
       } catch (err) {
         return {
